@@ -1,0 +1,155 @@
+#!/bin/bash
+# macvibe reconcile: run as root by launchd every 30s and whenever the request
+# or settings file changes. Reads sensors, decides, applies, writes status.
+set -u
+umask 022
+PATH="${MACVIBE_FAKEBIN:+$MACVIBE_FAKEBIN:}/usr/bin:/bin:/usr/sbin:/sbin"
+
+HERE=$(cd "$(dirname "$0")" && pwd)
+for lib in "$HERE/core.sh" "$HERE/../lib/core.sh"; do
+  if [ -f "$lib" ]; then . "$lib"; break; fi
+done
+
+SHARE="${MACVIBE_SHARE:-/Library/Application Support/macvibe}"
+STATE_DIR="${MACVIBE_STATE:-/var/db/macvibe}"
+LOG="${MACVIBE_LOG:-/var/log/macvibe.log}"
+STATE="$STATE_DIR/state"
+STATUS="$STATE_DIR/status"
+
+log() {
+  printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG"
+  if [ "$(wc -c < "$LOG")" -gt 524288 ]; then
+    tail -n 2000 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
+  fi
+}
+
+uint_or() { # value fallback
+  case "$1" in '' | *[!0-9]*) echo "$2" ;; *) echo "$1" ;; esac
+}
+
+notify() { # message; shown in the logged-in user's session
+  local user uid
+  user=$(stat -f %Su /dev/console 2>/dev/null)
+  [ -n "$user" ] && [ "$user" != root ] || return 0
+  uid=$(id -u "$user" 2>/dev/null) || return 0
+  launchctl asuser "$uid" sudo -u "$user" osascript \
+    -e "display notification \"$1\" with title \"MacVibe\" sound name \"Glass\"" >/dev/null 2>&1
+}
+
+has_external_display() {
+  system_profiler SPDisplaysDataType 2>/dev/null |
+    awk '/Connection Type:/ && !/Internal/ { found = 1 } END { exit !found }'
+}
+
+now=$(date +%s)
+boot=$(sysctl -n kern.boottime | sed -n 's/^{ sec = \([0-9]*\),.*/\1/p')
+
+# --- what the user asked for
+read -r mode since <<< "$(mv_read_request "$SHARE/request" "$boot")"
+if [ "$mode" = off ] && [ -s "$SHARE/request" ]; then
+  sleep 0.3 # the CLI/app may be mid-write; read once more before acting
+  read -r mode since <<< "$(mv_read_request "$SHARE/request" "$boot")"
+fi
+min_battery=$(mv_read_setting "$SHARE/settings" min_battery 20 5 60)
+max_temp=$(mv_read_setting "$SHARE/settings" max_temp 42 35 50)
+idle_minutes=$(mv_read_setting "$SHARE/settings" idle_minutes 15 1 240)
+low_power=$(mv_read_setting "$SHARE/settings" low_power 1 0 1)
+
+# --- previous state (root-owned, only this script writes it)
+st() { awk -F= -v k="$1" '$1 == k { sub(/^[^=]*=/, ""); print; exit }' "$STATE" 2>/dev/null; }
+session=$(st session); ended=$(uint_or "$(st ended)" 0)
+last_busy=$(uint_or "$(st last_busy)" "$now"); hot=$(uint_or "$(st hot)" 0)
+sample_time=$(uint_or "$(st sample_time)" 0); lpm_saved=$(st lpm_saved)
+event=$(st event); event_time=$(uint_or "$(st event_time)" 0)
+samples=$(awk '$1 == "sample" { print $2, $3 }' "$STATE" 2>/dev/null)
+
+if [ "$mode" != off ] && [ "$since" != "$session" ]; then
+  session=$since; ended=0; last_busy=$now; hot=0
+fi
+
+# --- sensors
+battery=$(ioreg -rn AppleSmartBattery 2>/dev/null)
+bval() { printf '%s\n' "$battery" | sed -n "s/.*\"$1\" = \\(.*\\)\$/\\1/p" | head -1; }
+if [ -n "$battery" ]; then
+  [ "$(bval ExternalConnected)" = Yes ] && ac=1 || ac=0
+  [ "$(bval IsCharging)" = Yes ] && charging=1 || charging=0
+  cur=$(uint_or "$(bval CurrentCapacity)" 100); max=$(uint_or "$(bval MaxCapacity)" 100)
+  [ "$max" -gt 0 ] || max=100
+  pct=$((cur * 100 / max))
+  temp_cc=$(uint_or "$(bval Temperature)" 0)
+else # no battery (desktop Mac)
+  ac=1; charging=0; pct=100; temp_cc=0
+fi
+ioreg -r -k AppleClamshellState -d 4 2>/dev/null | grep -q '"AppleClamshellState" = Yes' && lid=1 || lid=0
+thermal=$(uint_or "$(notifyutil -g com.apple.system.thermalpressurelevel 2>/dev/null | awk '{ print $2 }')" 0)
+
+scan=$(ps -axo pid=,ppid=,time=,comm= | mv_scan_agents)
+read -r agents_busy agents_total <<< "$(mv_busy "$scan" "$samples" $((now - sample_time)))"
+[ "$agents_busy" -gt 0 ] && busy=1 || busy=0
+if [ -z "$samples" ] || [ $((now - sample_time)) -ge 10 ]; then
+  samples=$(printf '%s\n' "$scan" | awk 'NF == 3 { print $1, $2 }'); sample_time=$now
+fi
+
+# --- decide
+out=$(mv_decide mode="$mode" ended="$ended" ac="$ac" pct="$pct" temp_cc="$temp_cc" \
+  thermal="$thermal" lid="$lid" busy="$busy" now="$now" last_busy="$last_busy" hot="$hot" \
+  min_battery="$min_battery" max_temp="$max_temp" idle_minutes="$idle_minutes" low_power="$low_power")
+d() { printf '%s\n' "$out" | awk -F= -v k="$1" '$1 == k { sub(/^[^=]*=/, ""); print; exit }'; }
+action=$(d action); end=$(d end); reason=$(d reason)
+last_busy=$(d last_busy); hot=$(d hot); lowpower=$(d lowpower); idle_left=$(d idle_left)
+
+# --- apply
+was_disabled=$(pmset -g | awk '$1 == "SleepDisabled" { print $2 }')
+was_disabled=$(uint_or "$was_disabled" 0)
+
+if [ "$lowpower" = 1 ] && [ -z "$lpm_saved" ]; then
+  lpm_saved=$(pmset -g custom | awk '/^Battery Power/ { b = 1 } /^AC Power/ { b = 0 } b && $1 == "lowpowermode" { print $2 }')
+  lpm_saved=$(uint_or "$lpm_saved" 0)
+  [ "$lpm_saved" = 1 ] || pmset -b lowpowermode 1
+elif [ "$lowpower" = 0 ] && [ -n "$lpm_saved" ]; then
+  [ "$lpm_saved" = 1 ] || pmset -b lowpowermode 0
+  lpm_saved=""
+fi
+
+sleep_now=0
+if [ "$action" = engage ]; then
+  if [ "$was_disabled" != 1 ]; then
+    pmset -a disablesleep 1
+    log "Awake with lid closed ($mode mode)"
+  fi
+else
+  if [ "$was_disabled" != 0 ]; then
+    pmset -a disablesleep 0
+    [ "$mode" = off ] && [ "$end" = 0 ] && log "Normal sleep restored"
+    if [ "$lid" = 1 ] && ! has_external_display; then sleep_now=1; fi
+  fi
+  if [ "$end" = 1 ]; then
+    ended=1; event=$reason; event_time=$now
+    log "Stopped: $reason"
+    notify "Stopped keeping your Mac awake: $reason."
+  fi
+fi
+
+active=0; [ "$action" = engage ] && active=1
+shown_mode=$mode; [ "$active" = 0 ] && shown_mode=off
+
+{
+  printf 'session=%s\nended=%s\nlast_busy=%s\nhot=%s\nsample_time=%s\nlpm_saved=%s\nevent=%s\nevent_time=%s\n' \
+    "$session" "$ended" "$last_busy" "$hot" "$sample_time" "$lpm_saved" "$event" "$event_time"
+  printf '%s\n' "$samples" | awk 'NF == 2 { print "sample", $1, $2 }'
+} > "$STATE.tmp" && mv "$STATE.tmp" "$STATE"
+
+[ "$ac" = 1 ] && power=ac || power=battery
+[ "$lid" = 1 ] && lid_word=closed || lid_word=open
+{
+  printf 'updated=%s\nsession=%s\nmode=%s\nrequested=%s\nactive=%s\n' "$now" "$session" "$shown_mode" "$mode" "$active"
+  printf 'lid=%s\npower=%s\ncharging=%s\nbattery=%s\ntemp=%s\nthermal=%s\n' \
+    "$lid_word" "$power" "$charging" "$pct" "$(mv_celsius "$temp_cc")" "$(mv_thermal_name "$thermal")"
+  printf 'agents_busy=%s\nagents_total=%s\nidle_left=%s\nlowpower_active=%s\n' \
+    "$agents_busy" "$agents_total" "$idle_left" "$lowpower"
+  printf 'min_battery=%s\nmax_temp=%s\nidle_minutes=%s\nlow_power=%s\nevent=%s\nevent_time=%s\n' \
+    "$min_battery" "$max_temp" "$idle_minutes" "$low_power" "$event" "$event_time"
+} > "$STATUS.tmp" && chmod 644 "$STATUS.tmp" && mv "$STATUS.tmp" "$STATUS"
+
+# Last, so the status above is already written when the Mac goes to sleep.
+if [ "$sleep_now" = 1 ]; then pmset sleepnow >/dev/null; fi
