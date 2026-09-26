@@ -25,8 +25,9 @@ func drawIcon(in rect: NSRect) {
     // Glass: a soft sheen on the upper half and a bright rim.
     NSGraphicsContext.saveGraphicsState()
     squircle.addClip()
-    NSGradient(colors: [NSColor.white.withAlphaComponent(0.34), NSColor.white.withAlphaComponent(0.0)])!
-        .draw(in: NSRect(x: body.minX, y: body.midY - 40 * s, width: body.width, height: body.height / 2 + 40 * s), angle: 90)
+    // Angle 90 runs bottom → top: clear at the middle, brightest at the top edge.
+    NSGradient(colors: [NSColor.white.withAlphaComponent(0.0), NSColor.white.withAlphaComponent(0.30)])!
+        .draw(in: NSRect(x: body.minX, y: body.midY - 60 * s, width: body.width, height: body.height / 2 + 60 * s), angle: 90)
     NSGraphicsContext.restoreGraphicsState()
     NSColor.white.withAlphaComponent(0.35).setStroke()
     let rim = NSBezierPath(roundedRect: body.insetBy(dx: 3 * s, dy: 3 * s), xRadius: 183 * s, yRadius: 183 * s)
