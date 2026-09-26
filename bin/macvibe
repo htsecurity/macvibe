@@ -94,9 +94,10 @@ set_setting() { # key value
     exit 2
   fi
   [ -w "$file" ] || die "MacVibe's helper isn't installed. $INSTALL_HINT"
-  { grep -v "^$key=" "$file" 2>/dev/null; echo "$key=$value"; } > "$file.new.$$"
-  cat "$file.new.$$" > "$file" # rewrite in place: keeps the file's owner and permissions
-  rm -f "$file.new.$$"
+  local rest
+  rest=$(grep -v "^$key=" "$file" 2>/dev/null)
+  # Rewrite in place: the folder belongs to root, only the file is yours.
+  { [ -n "$rest" ] && printf '%s\n' "$rest"; echo "$key=$value"; } > "$file" || die "Couldn't save $file"
   echo "Saved: $1 = ${2}"
 }
 

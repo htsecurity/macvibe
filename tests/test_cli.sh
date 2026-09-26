@@ -4,9 +4,10 @@ cd "$(dirname "$0")/.." || exit 1
 . tests/helpers.sh
 
 T=$(mktemp -d)
-trap 'rm -rf "$T"' EXIT
+trap 'chmod -R u+w "$T"; rm -rf "$T"' EXIT
 mkdir -p "$T/share" "$T/state"
 : > "$T/share/request"; : > "$T/share/settings"
+chmod 555 "$T/share" # like the real install: your files inside a folder you can't write to
 export MACVIBE_SHARE="$T/share" MACVIBE_STATE="$T/state" MACVIBE_WAIT=0
 BOOT=$(sysctl -n kern.boottime | sed -n 's/^{ sec = \([0-9]*\),.*/\1/p')
 cli() { bin/macvibe "$@" 2>&1; }
@@ -81,7 +82,7 @@ out=$(cli bogus); code=$?
 assert_eq "unknown command fails" 2 "$code"
 assert_contains "unknown command shows usage" "macvibe on" "$out"
 
-rm -rf "$T/share"
+chmod u+w "$T/share"; rm -rf "$T/share"
 out=$(cli on); code=$?
 assert_eq "on without install fails" 1 "$code"
 assert_contains "on without install explains" "sudo ./install.sh" "$out"

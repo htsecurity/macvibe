@@ -10,45 +10,8 @@ BOOT=1790280433
 export MACVIBE_FAKEBIN="$T/bin" MACVIBE_SHARE="$T/share" MACVIBE_STATE="$T/state" MACVIBE_LOG="$T/log"
 export FAKE="$T"
 
-# --- fakes: sensors come from files in $T, commands are recorded in $T/calls
-cat > "$T/bin/pmset" <<'EOF'
-#!/bin/bash
-echo "pmset $*" >> "$FAKE/calls"
-case "$*" in
-  "-g") echo " SleepDisabled		$(cat "$FAKE/sleepdisabled" 2>/dev/null || echo 0)" ;;
-  "-g custom") printf 'Battery Power:\n lowpowermode         %s\nAC Power:\n lowpowermode         0\n' "$(cat "$FAKE/lpm" 2>/dev/null || echo 0)" ;;
-  "-a disablesleep "*) echo "$3" > "$FAKE/sleepdisabled" ;;
-  "-b lowpowermode "*) echo "$3" > "$FAKE/lpm" ;;
-esac
-EOF
-cat > "$T/bin/ioreg" <<'EOF'
-#!/bin/bash
-case "$*" in
-  *AppleSmartBattery*) cat "$FAKE/battery" ;;
-  *AppleClamshellState*) echo "  |   \"AppleClamshellState\" = $(cat "$FAKE/lid")" ;;
-esac
-EOF
-cat > "$T/bin/ps" <<'EOF'
-#!/bin/bash
-cat "$FAKE/ps"
-EOF
-cat > "$T/bin/notifyutil" <<'EOF'
-#!/bin/bash
-echo "com.apple.system.thermalpressurelevel $(cat "$FAKE/thermal")"
-EOF
-cat > "$T/bin/sysctl" <<EOF
-#!/bin/bash
-echo "{ sec = $BOOT, usec = 1 } Thu Sep 24 22:07:13 2026"
-EOF
-cat > "$T/bin/system_profiler" <<'EOF'
-#!/bin/bash
-echo "          Connection Type: Internal"
-EOF
-cat > "$T/bin/launchctl" <<'EOF'
-#!/bin/bash
-echo "launchctl $*" >> "$FAKE/calls"
-EOF
-chmod +x "$T/bin/"*
+. tests/fakes.sh
+make_fakes "$T" "$BOOT"
 
 battery() { # ac(Yes/No) percent temp_cc
   printf '  |   "ExternalConnected" = %s\n  |   "MaxCapacity" = 100\n  |   "CurrentCapacity" = %s\n  |   "IsCharging" = No\n  |   "Temperature" = %s\n' "$1" "$2" "$3" > "$T/battery"

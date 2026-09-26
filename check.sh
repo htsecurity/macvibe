@@ -12,7 +12,10 @@ if command -v shellcheck >/dev/null; then
 fi
 plutil -lint -s launchd/*.plist app/Info.plist || fail=1
 
-for t in tests/test_*.sh; do /bin/bash "$t" || fail=1; done
+for t in tests/test_*.sh; do
+  [ "$t" = tests/test_app.sh ] && [ "${1:-}" = --no-app ] && continue # needs the macOS 26 SDK
+  /bin/bash "$t" || fail=1
+done
 
 if [ "${1:-}" != --no-app ]; then
   app/build.sh >/dev/null && echo "ok   app build" || { echo "FAIL app build"; fail=1; }
