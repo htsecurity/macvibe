@@ -191,8 +191,9 @@ final class Store {
         return tv.tv_sec
     }
 
+    /// Built from source, the app knows its folder; a downloaded release doesn't.
     static var installCommand: String {
-        let dir = Bundle.main.object(forInfoDictionaryKey: "MacVibeSourceDir") as? String ?? "~/macvibe"
-        return "cd '\(dir)' && sudo ./install.sh"
+        let dir = Bundle.main.object(forInfoDictionaryKey: "MacVibeSourceDir") as? String ?? ""
+        return dir.isEmpty ? "sudo ./install.sh" : "cd '\(dir)' && sudo ./install.sh"
     }
 }

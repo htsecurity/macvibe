@@ -87,7 +87,7 @@ fi
 ioreg -r -k AppleClamshellState -d 4 2>/dev/null | grep -q '"AppleClamshellState" = Yes' && lid=1 || lid=0
 thermal=$(uint_or "$(notifyutil -g com.apple.system.thermalpressurelevel 2>/dev/null | awk '{ print $2 }')" 0)
 
-scan=$(ps -axo pid=,ppid=,time=,comm= | mv_scan_agents)
+scan=$(ps -axo pid=,ppid=,time=,args= | mv_scan_agents)
 read -r agents_busy agents_total <<< "$(mv_busy "$scan" "$samples" $((now - sample_time)))"
 [ "$agents_busy" -gt 0 ] && busy=1 || busy=0
 if [ -z "$samples" ] || [ $((now - sample_time)) -ge 10 ]; then

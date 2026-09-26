@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Helper, CLI and decision logic tests
+        run: ./check.sh --no-app
+
+      - name: App build and app tests (needs the macOS 26 SDK)
+        run: |
+          sdk=$(xcrun --show-sdk-version | cut -d. -f1)
+          if [ "$sdk" -ge 26 ]; then
+            app/build.sh && bash tests/test_app.sh
+          else
+            echo "macOS SDK $sdk on this runner; skipping the Liquid Glass app build."
+          fi

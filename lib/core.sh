@@ -42,9 +42,10 @@ mv_read_setting() { # file key default min max
   echo "$v"
 }
 
-# stdin: `ps -axo pid=,ppid=,time=,comm=`
+# stdin: `ps -axo pid=,ppid=,time=,args=`
 # stdout: one line per agent: "PID TREE_CPU_CENTISECONDS HAS_CAFFEINATE"
 # Claude Code runs `caffeinate` as a child while it is working.
+# Script-based agents (gemini, aider…) run as node/python: their script name counts.
 mv_scan_agents() {
   awk -v agents=" $MV_AGENTS " '
     function cs(t,  a, n) {
@@ -52,10 +53,14 @@ mv_scan_agents() {
       if (n == 3) return int((a[1] * 3600 + a[2] * 60 + a[3]) * 100 + 0.5)
       return int((a[1] * 60 + a[2]) * 100 + 0.5)
     }
+    function base(p) { sub(".*/", "", p); return p }
     {
       pid = $1; cpu[pid] = cs($3)
-      c = $4; for (i = 5; i <= NF; i++) c = c " " $i
-      sub(".*/", "", c); name[pid] = c
+      n = base($4)
+      if (n ~ /^(node|bun|deno|python[0-9.]*)$/) {
+        for (i = 5; i <= NF; i++) if ($i !~ /^-/) { n = base($i); break }
+      }
+      name[pid] = n
       kids[$2] = kids[$2] " " pid
     }
     END {

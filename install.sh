@@ -39,9 +39,23 @@ uninstall() {
 
 if [ "${1:-}" = --uninstall ]; then uninstall; exit 0; fi
 [ -z "${1:-}" ] || die "Unknown option: $1"
+if [ -e "$APP" ] && ! is_our_app; then die "$APP exists and isn't MacVibe; not touching it."; fi
 
-say "Building the MacVibe app (as $USER_NAME)"
-sudo -H -u "$USER_NAME" ./app/build.sh
+# The menu bar app needs macOS 26 (Liquid Glass). The helper and CLI work on older versions.
+MACOS=$(sw_vers -productVersion)
+APP_SRC=""
+if [ "${MACOS%%.*}" -lt 26 ]; then
+  say "macOS $MACOS: the menu bar app needs macOS 26 or later; installing the helper and the macvibe command"
+elif [ -d MacVibe.app ]; then
+  APP_SRC=MacVibe.app # release download: prebuilt
+elif xcode-select -p >/dev/null 2>&1 && xcrun --find swiftc >/dev/null 2>&1; then
+  say "Building the MacVibe app (as $USER_NAME)"
+  sudo -H -u "$USER_NAME" ./app/build.sh
+  APP_SRC=build/MacVibe.app
+else
+  die "Building from source needs Xcode or the Command Line Tools (run: xcode-select --install).
+       Or download the ready-made release: https://github.com/htsecurity/macvibe/releases/latest"
+fi
 
 say "Installing the background helper"
 install -d -o root -g wheel -m 755 "$HELPER" "$STATE" "$SHARE"
@@ -66,13 +80,16 @@ for _ in 1 2 3 4 5; do # bootout finishes asynchronously
 done
 launchctl print system/$LABEL >/dev/null 2>&1 || die "The helper did not start. See: launchctl print system/$LABEL"
 
-say "Installing the app"
-pkill -x MacVibe 2>/dev/null || true
-if [ -e "$APP" ] && ! is_our_app; then die "$APP exists and isn't MacVibe; not touching it."; fi
-rm -rf "$APP"
-ditto build/MacVibe.app "$APP"
-chown -R "$USER_NAME":staff "$APP"
-launchctl asuser "$USER_UID" sudo -u "$USER_NAME" open "$APP" || true
+if [ -n "$APP_SRC" ]; then
+  say "Installing the app"
+  pkill -x MacVibe 2>/dev/null || true
+  rm -rf "$APP"
+  ditto "$APP_SRC" "$APP"
+  # Downloaded releases are ad-hoc signed, not notarized: clear the download flag so it opens.
+  xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
+  chown -R "$USER_NAME":staff "$APP"
+  launchctl asuser "$USER_UID" sudo -u "$USER_NAME" open "$APP" || true
+fi
 
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$STATE/status" ] && break; sleep 0.5; done
 [ -f "$STATE/status" ] || die "The helper is installed but hasn't reported. See: macvibe log"

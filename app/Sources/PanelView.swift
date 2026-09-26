@@ -39,7 +39,7 @@ private struct HeroCard: View {
 
     private var subtitle: String {
         guard store.helperInstalled else { return "Finish setup to get started" }
-        guard on else { return "Sleeps when you close the lid" }
+        guard on else { return "Sleeps when the lid closes" }
         if store.pending != nil { return "Turning on…" }
         if store.status?.lidClosed == true { return "Working with the lid closed" }
         return "Ready: close the lid anytime"
@@ -208,7 +208,7 @@ private struct SetupCard: View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Finish setup", systemImage: "lock.shield.fill")
                 .font(.system(size: 13, weight: .semibold))
-            Text("Install the background helper once. Run this in Terminal and enter your Mac password:")
+            Text("Install the background helper once. In Terminal, go to the MacVibe folder, run this, and enter your Mac password:")
                 .font(.system(size: 11.5))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

@@ -4,7 +4,7 @@ set -u
 cd "$(dirname "$0")"
 fail=0
 
-for f in bin/macvibe libexec/macvibe-reconcile lib/core.sh install.sh app/build.sh tests/*.sh; do
+for f in bin/macvibe libexec/macvibe-reconcile lib/core.sh install.sh app/build.sh scripts/release.sh tests/*.sh; do
   /bin/bash -n "$f" || { echo "syntax error: $f"; fail=1; }
 done
 if command -v shellcheck >/dev/null; then

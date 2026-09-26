@@ -32,9 +32,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
+        for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            window.standardWindowButton(button)?.isHidden = true
+        }
         window.isMovableByWindowBackground = true
         window.contentViewController = NSHostingController(
-            rootView: PanelView(store: Store.shared).padding(.top, 20)
+            rootView: PanelView(store: Store.shared).ignoresSafeArea()
         )
         window.center()
         window.makeKeyAndOrderFront(nil)

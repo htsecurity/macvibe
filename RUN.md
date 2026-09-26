@@ -30,6 +30,11 @@ This builds the app, installs the background helper, and opens MacVibe (cup icon
 app/build.sh && open build/MacVibe.app --args --preview
 ```
 
+## Make a release
+```bash
+scripts/release.sh          # checks, universal build, dist/MacVibe.zip + .sha256
+```
+
 ## Update after changing code
 ```bash
 sudo ./install.sh
