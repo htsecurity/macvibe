@@ -42,7 +42,7 @@ struct StepperRow: View {
     let range: ClosedRange<Int>
     let step: Int
     let format: (Int) -> String
-    let onChange: @MainActor @Sendable (Int) -> Void
+    let onChange: @MainActor (Int) -> Void
 
     var body: some View {
         HStack(spacing: 10) {
@@ -53,7 +53,10 @@ struct StepperRow: View {
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
                 .contentTransition(.numericText())
-            Stepper(title, value: Binding(get: { value }, set: onChange), in: range, step: step)
+            // Plain actions instead of a Binding: Swift 6.3 (Xcode 26) crashes compiling that conversion.
+            Stepper(title,
+                    onIncrement: { onChange(min(value + step, range.upperBound)) },
+                    onDecrement: { onChange(max(value - step, range.lowerBound)) })
                 .labelsHidden()
                 .controlSize(.small)
         }
