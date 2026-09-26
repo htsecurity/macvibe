@@ -125,4 +125,9 @@ echo 1 > "$T/sleepdisabled"
 run
 assert_contains "self-heal re-enables sleep" "pmset -a disablesleep 0" "$(calls)"
 
+# 9. Newer Macs (M5, macOS 27) only report temperature inside the BatteryData dictionary.
+printf '  |   "ExternalConnected" = Yes\n  |   "MaxCapacity" = 100\n  |   "CurrentCapacity" = 72\n  | |   "BatteryData" = {"DesignCapacity"=6249,"Temperature"=4310,"VirtualTemperature"=4310}\n' > "$T/battery"
+run
+assert_eq "nested battery temperature" 43.1 "$(status temp)"
+
 finish

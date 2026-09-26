@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.macvibe.reconcile</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Library/PrivilegedHelperTools/macvibe/reconcile</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StartInterval</key>
+	<integer>30</integer>
+	<key>WatchPaths</key>
+	<array>
+		<string>/Library/Application Support/macvibe/request</string>
+		<string>/Library/Application Support/macvibe/settings</string>
+	</array>
+	<key>ThrottleInterval</key>
+	<integer>1</integer>
+	<key>StandardOutPath</key>
+	<string>/var/log/macvibe.log</string>
+	<key>StandardErrorPath</key>
+	<string>/var/log/macvibe.log</string>
+</dict>
+</plist>

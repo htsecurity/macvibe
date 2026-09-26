@@ -1,0 +1,155 @@
+#!/bin/bash
+# macvibe: keep your Mac working with the lid closed while AI agents code.
+# This command only writes requests; the root helper (launchd) does the rest.
+set -u
+
+SHARE="${MACVIBE_SHARE:-/Library/Application Support/macvibe}"
+STATE_DIR="${MACVIBE_STATE:-/var/db/macvibe}"
+LOG="${MACVIBE_LOG:-/var/log/macvibe.log}"
+WAIT="${MACVIBE_WAIT:-6}"
+INSTALL_HINT="Install the helper first:  cd <macvibe folder> && sudo ./install.sh"
+
+if [ -t 1 ]; then
+  B=$'\033[1m' DIM=$'\033[2m' GRN=$'\033[32m' YEL=$'\033[33m' RED=$'\033[31m' R=$'\033[0m'
+else
+  B="" DIM="" GRN="" YEL="" RED="" R=""
+fi
+
+usage() {
+  cat <<EOF
+${B}macvibe${R}: keep coding with the lid closed, and keep the battery healthy
+
+  macvibe on              Stay awake with the lid closed while agents work
+                          (sleeps once they have been idle, lid closed)
+  macvibe on --forever    Stay awake until you run 'macvibe off'
+  macvibe off             Back to normal sleep
+  macvibe status          What's happening right now
+  macvibe set KEY VALUE   min-battery 5-60 | max-temp 35-50 | idle 1-240 | low-power on/off
+  macvibe log             Recent events
+
+Safety always applies: low battery, heat, or a reboot switch it off.
+EOF
+}
+
+die() { printf '%s\n' "$*" >&2; exit 1; }
+
+get() { # key file
+  awk -F= -v k="$1" '$1 == k { sub(/^[^=]*=/, ""); print; exit }' "$2" 2>/dev/null
+}
+
+boot_id() { sysctl -n kern.boottime | sed -n 's/^{ sec = \([0-9]*\),.*/\1/p'; }
+
+require_helper() {
+  [ -w "$SHARE/request" ] || die "MacVibe's helper isn't installed. $INSTALL_HINT"
+}
+
+request() { # mode
+  local since
+  require_helper
+  since=$(date +%s)
+  printf 'mode=%s\nsince=%s\nboot=%s\n' "$1" "$since" "$(boot_id)" > "$SHARE/request"
+  wait_for "$1" "$since"
+}
+
+# Wait until the helper has applied the request, then show the result.
+wait_for() { # mode since
+  local tries=$((WAIT * 4)) st="$STATE_DIR/status"
+  [ "$WAIT" -gt 0 ] || { echo "Requested: $1"; return 0; }
+  while [ "$tries" -gt 0 ]; do
+    if [ "$1" = off ]; then
+      [ "$(get mode "$st")" = off ] && [ "$(get requested "$st")" = off ] && break
+    elif [ "$(get session "$st")" = "$2" ]; then
+      break
+    fi
+    sleep 0.25; tries=$((tries - 1))
+  done
+  if [ "$tries" -eq 0 ]; then
+    echo "${YEL}The helper hasn't responded yet.${R} Check 'macvibe status' in a few seconds."
+    return 0
+  fi
+  if [ "$1" != off ] && [ "$(get active "$st")" != 1 ]; then
+    echo "${RED}Can't stay awake right now:${R} $(get event "$st")"
+    return 1
+  fi
+  status
+}
+
+set_setting() { # key value
+  local key value min max file="$SHARE/settings"
+  case "${1:-}" in
+    min-battery) key=min_battery min=5 max=60 ;;
+    max-temp) key=max_temp min=35 max=50 ;;
+    idle) key=idle_minutes min=1 max=240 ;;
+    low-power) key=low_power min=0 max=1 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+  value="${2:-}"
+  if [ "$key" = low_power ]; then
+    case "$value" in on | 1) value=1 ;; off | 0) value=0 ;; *) value=x ;; esac
+  fi
+  case "$value" in '' | *[!0-9]*) value=-1 ;; esac
+  if [ "$value" -lt "$min" ] || [ "$value" -gt "$max" ]; then
+    if [ "$key" = low_power ]; then echo "low-power must be on or off" >&2
+    else echo "$1 must be a number from $min to $max" >&2; fi
+    exit 2
+  fi
+  [ -w "$file" ] || die "MacVibe's helper isn't installed. $INSTALL_HINT"
+  { grep -v "^$key=" "$file" 2>/dev/null; echo "$key=$value"; } > "$file.new.$$"
+  cat "$file.new.$$" > "$file" # rewrite in place: keeps the file's owner and permissions
+  rm -f "$file.new.$$"
+  echo "Saved: $1 = ${2}"
+}
+
+ago() { # epoch -> "14:02" today or "Sep 24 14:02"
+  if [ "$(date -r "$1" +%F)" = "$(date +%F)" ]; then date -r "$1" +%H:%M; else date -r "$1" '+%b %-d %H:%M'; fi
+}
+
+status() {
+  local st="$STATE_DIR/status" updated age mode idle_left event
+  if [ ! -f "$st" ]; then
+    echo "MacVibe's helper isn't installed (or hasn't run yet). $INSTALL_HINT"
+    return 0
+  fi
+  updated=$(get updated "$st"); age=$(($(date +%s) - ${updated:-0}))
+  mode=$(get mode "$st")
+  if [ "$(get active "$st")" = 1 ]; then
+    [ "$mode" = forever ] && mode_text="until you turn it off" || mode_text="while agents work"
+    echo "${B}MacVibe${R}  ${GRN}●${R} ${B}Awake with lid closed${R} ${DIM}($mode_text)${R}"
+  else
+    echo "${B}MacVibe${R}  ${DIM}○${R} ${B}Off${R} ${DIM}(the Mac sleeps normally when you close the lid)${R}"
+  fi
+  local power; [ "$(get power "$st")" = ac ] && power="charger" || power="battery"
+  [ "$(get charging "$st")" = 1 ] && power="$power, charging"
+  printf '  %-11s %s\n' "Lid" "$(get lid "$st")"
+  printf '  %-11s %s%% (%s)\n' "Battery" "$(get battery "$st")" "$power"
+  printf '  %-11s %s°C, thermal %s\n' "Heat" "$(get temp "$st")" "$(get thermal "$st")"
+  printf '  %-11s %s of %s working\n' "Agents" "$(get agents_busy "$st")" "$(get agents_total "$st")"
+  idle_left=$(get idle_left "$st")
+  if [ "${idle_left:--1}" -ge 0 ] && [ "$(get lid "$st")" = closed ]; then
+    printf '  %-11s in %s min if agents stay idle\n' "Auto-sleep" $(((idle_left + 59) / 60))
+  fi
+  [ "$(get lowpower_active "$st")" = 1 ] && printf '  %-11s %s\n' "Low Power" "on (lid closed)"
+  printf '  %-11s sleeps at %s%% battery or %s°C; after %s min idle (lid closed)\n' "Safety" \
+    "$(get min_battery "$st")" "$(get max_temp "$st")" "$(get idle_minutes "$st")"
+  event=$(get event "$st")
+  [ -n "$event" ] && printf '  %-11s %s (%s)\n' "Last stop" "$event" "$(ago "$(get event_time "$st")")"
+  if [ "$age" -gt 90 ]; then
+    echo "  ${YEL}The helper has not reported for $((age / 60)) min.${R} Try: sudo ./install.sh"
+  fi
+}
+
+case "${1:-help}" in
+  on)
+    case "${2:-}" in
+      "") request auto ;;
+      --forever) request forever ;;
+      *) usage >&2; exit 2 ;;
+    esac
+    ;;
+  off) request off ;;
+  status) status ;;
+  set) shift; set_setting "$@" ;;
+  log) tail -n "${2:-30}" "$LOG" 2>/dev/null || echo "No log yet." ;;
+  help | -h | --help) usage ;;
+  *) usage >&2; exit 2 ;;
+esac

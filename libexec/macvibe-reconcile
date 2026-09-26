@@ -19,7 +19,8 @@ STATUS="$STATE_DIR/status"
 log() {
   printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG"
   if [ "$(wc -c < "$LOG")" -gt 524288 ]; then
-    tail -n 2000 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
+    # Rewrite in place: launchd keeps this file open for the helper's output.
+    tail -n 2000 "$LOG" > "$LOG.tmp" && cat "$LOG.tmp" > "$LOG" && rm -f "$LOG.tmp"
   fi
 }
 
@@ -68,7 +69,7 @@ if [ "$mode" != off ] && [ "$since" != "$session" ]; then
 fi
 
 # --- sensors
-battery=$(ioreg -rn AppleSmartBattery 2>/dev/null)
+battery=$(ioreg -rn AppleSmartBattery -l 2>/dev/null)
 bval() { printf '%s\n' "$battery" | sed -n "s/.*\"$1\" = \\(.*\\)\$/\\1/p" | head -1; }
 if [ -n "$battery" ]; then
   [ "$(bval ExternalConnected)" = Yes ] && ac=1 || ac=0
@@ -76,7 +77,10 @@ if [ -n "$battery" ]; then
   cur=$(uint_or "$(bval CurrentCapacity)" 100); max=$(uint_or "$(bval MaxCapacity)" 100)
   [ "$max" -gt 0 ] || max=100
   pct=$((cur * 100 / max))
-  temp_cc=$(uint_or "$(bval Temperature)" 0)
+  # Hundredths of °C. Newer Macs only report it inside the BatteryData dictionary.
+  temp_cc=$(bval Temperature)
+  [ -n "$temp_cc" ] || temp_cc=$(printf '%s\n' "$battery" | sed -n 's/.*[{,]"Temperature"=\([0-9]*\).*/\1/p' | head -1)
+  temp_cc=$(uint_or "$temp_cc" 0)
 else # no battery (desktop Mac)
   ac=1; charging=0; pct=100; temp_cc=0
 fi
